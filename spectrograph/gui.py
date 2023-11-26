@@ -1,3 +1,4 @@
+from collections import deque
 import math
 import sys
 import time
@@ -8,13 +9,7 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHB
 from PyQt5.QtGui import QDoubleValidator, QTransform
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 
-from .datamodel import AccelerometerData, ThreadPortReadout
-
-def build_division_line():
-    division_line = QFrame()
-    division_line.setFrameShape(QFrame.HLine)
-    division_line.setFrameShadow(QFrame.Sunken)
-    return division_line
+from .datamodel import AccelerometerData, ThreadPortReadout, project_x, project_xyz, project_y, project_z
 
 class DivisionLineWidget(QFrame):
     def __init__(self):
@@ -76,6 +71,11 @@ class SliderInputWidget(QWidget):
 class DataVisualizationWidget(QWidget):
     def __init__(self):
         super().__init__()
+
+        self.spectrogram = None
+        self.spectrogram_args = None
+        self.spectrogram_last_time = 0
+
         self.layout = QVBoxLayout(self)
 
         # Create a splitter for adjusting the height of graph and spectrogram
@@ -99,49 +99,58 @@ class DataVisualizationWidget(QWidget):
         self.layout.addWidget(self.time_slider)  # Add the slider to the layout
         self.setLayout(self.layout)
 
-    def update(self, sample_window, min_freq, max_freq, y_range,
+    def update_spectrum(self, sample_window, min_freq, max_freq, y_range,
                spectrogram_length, sample_projection, datasource):
         start_time = time.time()
         x, y = datasource.get_fft(
             datasource.get_length() - sample_window,
             datasource.get_length(),
             min_freq, max_freq, sample_projection)
-        print(f"Took1: {time.time() - start_time}")
         self.graph_widget.clear()
         self.graph_widget.setYRange(0, y_range)
         self.graph_widget.setXRange(min_freq, max_freq)
         self.graph_widget.plot(x, y, pen=pg.mkPen('r', width=2))
-        print(f"Took2: {time.time() - start_time}")
 
-        spectrogram_lines = []
-        empty = True
-        for i in range(int(spectrogram_length / sample_window)):
-            j = int(spectrogram_length / sample_window) - i
-            end = datasource.get_length() - j * sample_window
-            start = end - sample_window
-            if start < 0 or end < 0:
-                spectrogram_lines.append([])
-                continue
-            empty = False
+    def update_spectrogram(self, sample_window, min_freq, max_freq, y_range,
+            spectrogram_length, sample_projection, datasource):
+        DIVISION_FACTOR = 5
+        start_time = time.time()
+
+        args = (sample_window, min_freq, max_freq, spectrogram_length, sample_projection)
+        if args != self.spectrogram_args:
+            self.spectrogram_args = args
+            self.spectrogram = deque([[]
+                for _ in range(int(spectrogram_length / sample_window * DIVISION_FACTOR))
+            ], maxlen = int(DIVISION_FACTOR * spectrogram_length / sample_window))
+            self.spectrogram_last_time = datasource.get_length() - spectrogram_length
+
+        steps_made = 0
+        while self.spectrogram_last_time + sample_window * (1 + 1 / DIVISION_FACTOR) < datasource.get_length():
+            start = self.spectrogram_last_time + sample_window * (1 / DIVISION_FACTOR)
+            end = start + sample_window
             _, y = datasource.get_fft(start, end, min_freq, max_freq, sample_projection)
-            spectrogram_lines.append(y)
+            self.spectrogram.append(y)
+            self.spectrogram_last_time = start
 
-        print(f"Took3: {time.time() - start_time}")
+            # Do not make the GUI responsive
+            steps_made += 1
+            if steps_made > 50:
+                break
+
         self.spectrogram_widget.clear()
-        if empty:
+        if len(self.spectrogram) == 0:
             return
 
         cmap = pg.ColorMap(pos=np.array([0.0, y_range]),
                            color=np.array([[0, 0, 0, 255], [255, 255, 255, 255]]))
 
-        max_length = max(len(sublist) for sublist in spectrogram_lines)
-        line_count = len(spectrogram_lines)
-        padded_spectrogram_lines = [np.pad(sublist, (0, max_length - len(sublist)), 'constant') for sublist in spectrogram_lines]
+        max_length = max(len(sublist) for sublist in self.spectrogram)
+        line_count = len(self.spectrogram)
+        padded_spectrogram_lines = [np.pad(sublist, (0, max_length - len(sublist)), 'constant') for sublist in self.spectrogram]
         image = np.clip(np.transpose(padded_spectrogram_lines), 0, y_range)
         image_rgb = cmap.map(image)
         img = pg.ImageItem(image=image_rgb)
 
-        print("L", spectrogram_length, line_count)
         img.setTransform(QTransform()
             .scale(1, spectrogram_length / line_count)
             .translate(0, -line_count)
@@ -153,7 +162,6 @@ class DataVisualizationWidget(QWidget):
         self.spectrogram_widget.setYRange(-spectrogram_length, 0)
 
         self.spectrogram_widget.addItem(img)
-        print(f"Took4: {time.time() - start_time}")
 
 
 
@@ -257,7 +265,6 @@ class ControlPanelWidget(QWidget):
             return
 
         port = self.com_ports_combo.itemText(idx)
-        print("P", port)
         self.start_button.setDisabled(True)
         self.stop_button.setDisabled(False)
         self.com_ports_combo.setDisabled(True)
@@ -280,10 +287,10 @@ class ControlPanelWidget(QWidget):
 
     def get_selected_projection(self):
         projection_functions = [
-            lambda x, y, z: x + y + z,
-            lambda x, y, z: x,
-            lambda x, y, z: y,
-            lambda x, y, z: z
+            project_xyz,
+            project_x,
+            project_y,
+            project_z
         ]
         return projection_functions[self.sample_projection_combo.currentIndex()]
 
@@ -312,7 +319,7 @@ class MainWindow(QMainWindow):
 
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(lambda:
-            self.data_visualization_widget.update(
+            self.data_visualization_widget.update_spectrum(
                 self.control_panel_widget.window_size_input.get_value(),
                 self.control_panel_widget.min_freq_input.get_value(),
                 self.control_panel_widget.max_freq_input.get_value(),
@@ -321,7 +328,17 @@ class MainWindow(QMainWindow):
                 self.control_panel_widget.get_selected_projection(),
                 self.data
             ))
-        self.refresh_timer.start(300)  # Refresh every 0.3 second
+        self.refresh_timer.timeout.connect(lambda:
+            self.data_visualization_widget.update_spectrogram(
+                self.control_panel_widget.window_size_input.get_value(),
+                self.control_panel_widget.min_freq_input.get_value(),
+                self.control_panel_widget.max_freq_input.get_value(),
+                self.control_panel_widget.range_input.get_value(),
+                self.control_panel_widget.length_input.get_value(),
+                self.control_panel_widget.get_selected_projection(),
+                self.data
+            ))
+        self.refresh_timer.start(150)  # Refresh every 0.3 second
 
         self.control_panel_widget.recording_start.connect(self.on_readout_start)
         self.control_panel_widget.recording_stop.connect(self.on_readout_stop)

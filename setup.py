@@ -14,7 +14,8 @@ setup(
         "cobs~=1.2",
         "pyserial>=3.5",
         "PyQt5~=5.15",
-        "pyqtgraph~=0.13"
+        "pyqtgraph~=0.13",
+        "scipy~=1.11"
     ],
     python_requires=">=3.10",
     classifiers=[

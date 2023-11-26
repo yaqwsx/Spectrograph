@@ -10,6 +10,18 @@ import serial
 SAMPLING_RATE = 4000
 MAX_HISTORY = 5 * 60 * 4000
 
+def project_xyz(x, y, z):
+    return x + y + z
+
+def project_x(x, y, z):
+    return x
+
+def project_y(x, y, z):
+    return y
+
+def project_z(x, y, z):
+    return z
+
 class AccelerometerData:
     def __init__(self) -> None:
        self.data = deque([], MAX_HISTORY)
