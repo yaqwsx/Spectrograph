@@ -27,6 +27,13 @@ class AccelerometerData:
        self.data = deque([], MAX_HISTORY)
        self.tmp_data = []
 
+    def set_data(self, data) -> None:
+        self.data = deque(data, MAX_HISTORY)
+        self.tmp_data = []
+
+    def as_np(self) -> None:
+        return np.array(self.data)
+
     def push_sample(self, sample: Tuple[float, float, float]) -> None:
         self.tmp_data.append(sample)
 
@@ -45,11 +52,13 @@ class AccelerometerData:
         """
         return len(self.data) / SAMPLING_RATE
 
+    def pull_samples(self):
+        self._finish_push_sample()
+
     def get_sample_count_for_window(self, duration):
         return round(duration * SAMPLING_RATE)
 
     def get_sample_window(self, from_t, to_t, sample_projection):
-        self._finish_push_sample()
 
         expected_samples = self.get_sample_count_for_window(to_t - from_t)
 

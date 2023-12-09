@@ -5,7 +5,7 @@ import time
 import numpy as np
 import pyqtgraph as pg
 import serial.tools.list_ports
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QFrame, QSplitter, QSlider, QLineEdit, QCheckBox, QLabel, QSpacerItem, QSizePolicy, QMessageBox
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QFrame, QSplitter, QSlider, QLineEdit, QCheckBox, QLabel, QSpacerItem, QSizePolicy, QMessageBox, QFileDialog
 from PyQt5.QtGui import QDoubleValidator, QTransform
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 
@@ -49,6 +49,7 @@ class SliderInputWidget(QWidget):
         self.min_val = min_val
         self.max_val = max_val
         self.resolution = resolution
+        self.tracking = 0
 
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(0, int((max_val - min_val) / resolution))
@@ -64,6 +65,22 @@ class SliderInputWidget(QWidget):
 
         self.setLayout(layout)
         self.set_value(default)
+
+    def set_tracking(self, value):
+        self.tracking = value
+
+    def move_to_max(self):
+        self.slider.setValue(self.slider.maximum())
+        self._slider_value_changed(self.slider.maximum())
+
+    def set_range(self, min_val, max_val):
+        self.min_val = min_val
+        self.max_val = max_val
+        update_to_max = self.tracking and self.slider.value() == self.slider.maximum()
+        self.slider.setRange(0, int((max_val - min_val) / self.resolution))
+        if update_to_max:
+            self.slider.setValue(self.slider.maximum())
+            self._slider_value_changed(self.slider.maximum())
 
     @property
     def _decimals(self):
@@ -97,6 +114,8 @@ class DataVisualizationWidget(QWidget):
 
         self.spectrogram = None
         self.spectrogram_args = None
+        self.spectrogram_time_offset = 0
+        self.spectrogram_start_point = 0
         self.spectrogram_last_time = 0
 
         self.layout = QVBoxLayout(self)
@@ -108,9 +127,7 @@ class DataVisualizationWidget(QWidget):
         self.graph_widget.showGrid(x=True, y=True)
         self.spectrum_plot = self.graph_widget.plot([], [], pen=pg.mkPen('r', width=1.5))
         self.v_line = pg.InfiniteLine(angle=90, movable=False)
-        self.v_line.setPen((255, 255, 255, 255), width=1)
         self.h_line = pg.InfiniteLine(angle=0, movable=False)
-        self.h_line.setPen((255, 255, 255, 255), width=1)
         self.graph_widget.addItem(self.v_line, ignoreBounds=True)
         self.graph_widget.addItem(self.h_line, ignoreBounds=True)
         self.crosshair_update = pg.SignalProxy(self.graph_widget.scene().sigMouseMoved, rateLimit=60, slot=self.update_crosshair)
@@ -119,6 +136,9 @@ class DataVisualizationWidget(QWidget):
         self.spectrogram_widget = pg.PlotWidget()
         self.spectrogram_img = pg.ImageItem()
         self.spectrogram_widget.addItem(self.spectrogram_img)
+        self.spectrogram_v_line = pg.InfiniteLine(angle=90, movable=False)
+        self.spectrogram_v_line.setPen((255, 255, 255), width=2)
+        self.spectrogram_widget.addItem(self.spectrogram_v_line)
 
         # Align their X-axis
         self.spectrogram_widget.setXLink(self.graph_widget)
@@ -128,8 +148,8 @@ class DataVisualizationWidget(QWidget):
         self.splitter.addWidget(self.spectrogram_widget)
 
         # Create a slider for navigating back in time
-        self.time_slider = QSlider(Qt.Horizontal)
-        self.time_slider.setRange(0, 100)  # Set the range of the slider as needed
+        self.time_slider = SliderInputWidget(0, 0, 0.001, 0)
+        self.time_slider.set_tracking(True)
 
         self.layout.addWidget(self.splitter)
         self.layout.addWidget(self.time_slider)  # Add the slider to the layout
@@ -142,13 +162,23 @@ class DataVisualizationWidget(QWidget):
             self.graph_widget.setTitle("<span style='font-size: 12pt'>Frekvence=%0.0f Hz, <span style='color: red'>Amplituda=%0.3f g</span>" % (mouse_point.x(), mouse_point.y()))
             self.v_line.setPos(mouse_point.x())
             self.h_line.setPos(mouse_point.y())
+            self.spectrogram_v_line.setPos(mouse_point.x())
 
     def update_spectrum(self, sample_window, min_freq, max_freq, y_range,
                spectrogram_length, sample_projection, datasource):
-        TIME_EPSILON = 0.1
+        TIME_EPSILON = 0.05
+
+        last_full_time = datasource.get_length()
+        datasource.pull_samples()
+        self.time_slider.set_range(0, datasource.get_length())
+        if np.abs(self.time_slider.get_value() - last_full_time) < TIME_EPSILON:
+            self.time_slider.set_value(datasource.get_length())
+
+        time_point = self.time_slider.get_value()
+
         x, y = datasource.get_fft(
-            datasource.get_length() - sample_window - TIME_EPSILON,
-            datasource.get_length() - TIME_EPSILON,
+            time_point - sample_window - TIME_EPSILON,
+            time_point - TIME_EPSILON,
             min_freq, max_freq, sample_projection)
         self.graph_widget.setYRange(0, y_range)
         self.graph_widget.setXRange(min_freq, max_freq)
@@ -158,22 +188,25 @@ class DataVisualizationWidget(QWidget):
             spectrogram_length, sample_projection, datasource):
         DIVISION_FACTOR = 10
 
+        time_offset = self.time_slider.get_value() - datasource.get_length()
+
         args = (sample_window, min_freq, max_freq, spectrogram_length, sample_projection)
-        if args != self.spectrogram_args:
+        if args != self.spectrogram_args or np.abs(time_offset - self.spectrogram_time_offset) > 0.01:
             self.spectrogram_args = args
+            self.spectrogram_time_offset = time_offset
 
             _, y = datasource.get_fft(0, sample_window, min_freq, max_freq, sample_projection)
             self.expected_samples = len(y)
             self.spectrogram = deque([np.full((self.expected_samples,), 0)
                 for _ in range(int(spectrogram_length / sample_window * DIVISION_FACTOR))
             ], maxlen = int(DIVISION_FACTOR * spectrogram_length / sample_window))
-            self.spectrogram_last_time = datasource.get_length() - spectrogram_length
+            self.spectrogram_last_time = datasource.get_length() + self.spectrogram_time_offset - spectrogram_length
 
         steps_made = 0
         while True:
             start = self.spectrogram_last_time + sample_window * (1 / DIVISION_FACTOR)
             end = start + sample_window
-            if end >= datasource.get_length():
+            if end >= datasource.get_length() + self.spectrogram_time_offset:
                 break
 
             if start < 0 and end < 0:
@@ -186,7 +219,7 @@ class DataVisualizationWidget(QWidget):
             self.spectrogram_last_time = start
 
             # Do not make the GUI responsive
-            if steps_made > 500:
+            if steps_made > 300:
                 break
 
         line_count = len(self.spectrogram)
@@ -207,8 +240,8 @@ class DataVisualizationWidget(QWidget):
 
         self.spectrogram_widget.setYRange(-spectrogram_length, 0)
 
-
-
+    def on_readout_start(self):
+        self.time_slider.move_to_max()
 
 class ControlPanelWidget(QWidget):
     params_updated = pyqtSignal()
@@ -252,7 +285,7 @@ class ControlPanelWidget(QWidget):
         self.max_freq_input.valueChanged.connect(self.params_updated.emit)
         parameter_input_group.addWidget(self.max_freq_input)
         parameter_input_group.addWidget(QLabel("Rozsah (g):"))
-        self.range_input = SliderInputWidget(0, 2, 0.01, 2)
+        self.range_input = SliderInputWidget(0, 2, 0.01, 0.1)
         self.range_input.valueChanged.connect(self.params_updated.emit)
         parameter_input_group.addWidget(self.range_input)
         parameter_input_group.addWidget(QLabel("Délka spektrogramu (s):"))
@@ -290,8 +323,6 @@ class ControlPanelWidget(QWidget):
         # Connect button click handlers
         self.start_button.clicked.connect(self.start_recording)
         self.stop_button.clicked.connect(self.stop_recording)
-        self.load_button.clicked.connect(self.load_trace)
-        self.save_button.clicked.connect(self.save_trace)
 
     def populate_com_ports(self):
         com_ports = [port.device for port in serial.tools.list_ports.comports()]
@@ -315,20 +346,17 @@ class ControlPanelWidget(QWidget):
         self.com_ports_combo.setDisabled(True)
         self.recording_start.emit(port)
 
+        self.load_button.setDisabled(True)
+        self.save_button.setDisabled(True)
+
 
     def stop_recording(self):
         self.start_button.setDisabled(False)
         self.stop_button.setDisabled(True)
         self.com_ports_combo.setDisabled(False)
+        self.load_button.setDisabled(False)
+        self.save_button.setDisabled(False)
         self.recording_stop.emit()
-
-    def load_trace(self):
-        # Implement the functionality for loading a trace here
-        self.params_updated.emit()
-
-    def save_trace(self):
-        # Implement the functionality for saving a trace here
-        pass
 
     def get_selected_projection(self):
         projection_functions = [
@@ -390,12 +418,13 @@ class MainWindow(QMainWindow):
 
         self.control_panel_widget.recording_start.connect(self.on_readout_start)
         self.control_panel_widget.recording_stop.connect(self.on_readout_stop)
-
-        self.initUI()
+        self.control_panel_widget.load_button.clicked.connect(self.load_trace)
+        self.control_panel_widget.save_button.clicked.connect(self.save_trace)
 
     def on_readout_start(self, port):
         self.readout = ThreadPortReadout(port, self.data.push_sample)
         self.readout.start()
+        self.data_visualization_widget.on_readout_start()
 
     def on_readout_stop(self):
         if self.readout is not None:
@@ -405,12 +434,42 @@ class MainWindow(QMainWindow):
         if self.readout is not None:
             self.readout.stop()
 
-    def initUI(self):
-        pass
-        # Initialize the spectrogram plot (you can replace this with your actual data)
-        # spec_data = np.random.rand(100, 100)
-        # img = pg.ImageItem(image=spec_data)
-        # self.data_visualization_widget.spectrogram_widget.addItem(img)
+    def load_trace(self):
+        options = QFileDialog.Options()
+        options |= QFileDialog.ReadOnly
+
+        file_path, _ = QFileDialog.getOpenFileName(self,
+            "Náčíst záznam", "", "Záznam spektra (*.npy);;All Files(*)", options = options)
+
+        if file_path:
+            try:
+                data = np.load(file_path)
+                self.data.set_data(data)
+            except Exception as e:
+                message_box = QMessageBox()
+                message_box.setIcon(QMessageBox.Critical)
+                message_box.setWindowTitle("Chyba")
+                message_box.setText(f"Nepodařilo se načíst soubor: {e}")
+                message_box.setStandardButtons(QMessageBox.Ok)
+                message_box.exec_()
+
+    def save_trace(self):
+        options = QFileDialog.Options()
+
+        file_path, _ = QFileDialog.getSaveFileName(self,
+            "Uložit záznam", "", "Záznam spektra (*.npy);;All Files(*)", options = options)
+        if file_path:
+            if not file_path.endswith(".npy"):
+                file_path = file_path + ".npy"
+            try:
+                np.save(file_path, self.data.as_np())
+            except Exception as e:
+                message_box = QMessageBox()
+                message_box.setIcon(QMessageBox.Critical)
+                message_box.setWindowTitle("Chyba")
+                message_box.setText(f"Nepodařilo se načíst soubor: {e}")
+                message_box.setStandardButtons(QMessageBox.Ok)
+                message_box.exec_()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
