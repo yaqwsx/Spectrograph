@@ -184,6 +184,9 @@ class DataVisualizationWidget(QWidget):
         self.graph_widget.setXRange(min_freq, max_freq)
         self.spectrum_plot.setData(x, y)
 
+    def clear_spectrogram(self):
+        self.spectrogram_time_offset = -1
+
     def update_spectrogram(self, sample_window, min_freq, max_freq, y_range,
             spectrogram_length, sample_projection, datasource):
         DIVISION_FACTOR = 10
@@ -263,8 +266,10 @@ class ControlPanelWidget(QWidget):
         connection_widget_group.addWidget(self.stop_button)
 
         file_button_group = QVBoxLayout()
+        self.clear_button = QPushButton("Vyčistit")
         self.load_button = QPushButton("Načíst ze souboru")
         self.save_button = QPushButton("Uložit do souboru")
+        file_button_group.addWidget(self.clear_button)
         file_button_group.addWidget(self.load_button)
         file_button_group.addWidget(self.save_button)
 
@@ -285,7 +290,7 @@ class ControlPanelWidget(QWidget):
         self.max_freq_input.valueChanged.connect(self.params_updated.emit)
         parameter_input_group.addWidget(self.max_freq_input)
         parameter_input_group.addWidget(QLabel("Rozsah (g):"))
-        self.range_input = SliderInputWidget(0, 2, 0.01, 0.1)
+        self.range_input = SliderInputWidget(0, 2, 0.01, 2)
         self.range_input.valueChanged.connect(self.params_updated.emit)
         parameter_input_group.addWidget(self.range_input)
         parameter_input_group.addWidget(QLabel("Délka spektrogramu (s):"))
@@ -420,6 +425,7 @@ class MainWindow(QMainWindow):
         self.control_panel_widget.recording_stop.connect(self.on_readout_stop)
         self.control_panel_widget.load_button.clicked.connect(self.load_trace)
         self.control_panel_widget.save_button.clicked.connect(self.save_trace)
+        self.control_panel_widget.clear_button.clicked.connect(self.clear_trace)
 
     def on_readout_start(self, port):
         self.readout = ThreadPortReadout(port, self.data.push_sample)
@@ -470,6 +476,10 @@ class MainWindow(QMainWindow):
                 message_box.setText(f"Nepodařilo se načíst soubor: {e}")
                 message_box.setStandardButtons(QMessageBox.Ok)
                 message_box.exec_()
+
+    def clear_trace(self):
+        self.data.set_data([])
+        self.data_visualization_widget.clear_spectrogram()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
