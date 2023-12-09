@@ -105,6 +105,17 @@ class DataVisualizationWidget(QWidget):
         self.splitter = QSplitter(Qt.Vertical)
 
         self.graph_widget = pg.PlotWidget()
+        self.graph_widget.showGrid(x=True, y=True)
+        self.spectrum_plot = self.graph_widget.plot([], [], pen=pg.mkPen('r', width=1.5))
+        self.v_line = pg.InfiniteLine(angle=90, movable=False)
+        self.v_line.setPen((255, 255, 255, 255), width=1)
+        self.h_line = pg.InfiniteLine(angle=0, movable=False)
+        self.h_line.setPen((255, 255, 255, 255), width=1)
+        self.graph_widget.addItem(self.v_line, ignoreBounds=True)
+        self.graph_widget.addItem(self.h_line, ignoreBounds=True)
+        self.crosshair_update = pg.SignalProxy(self.graph_widget.scene().sigMouseMoved, rateLimit=60, slot=self.update_crosshair)
+
+
         self.spectrogram_widget = pg.PlotWidget()
         self.spectrogram_img = pg.ImageItem()
         self.spectrogram_widget.addItem(self.spectrogram_img)
@@ -124,6 +135,14 @@ class DataVisualizationWidget(QWidget):
         self.layout.addWidget(self.time_slider)  # Add the slider to the layout
         self.setLayout(self.layout)
 
+    def update_crosshair(self, evt):
+        pos = evt[0]
+        if self.graph_widget.sceneBoundingRect().contains(pos):
+            mouse_point = self.graph_widget.plotItem.vb.mapSceneToView(pos)
+            self.graph_widget.setTitle("<span style='font-size: 12pt'>Frekvence=%0.0f Hz, <span style='color: red'>Amplituda=%0.3f g</span>" % (mouse_point.x(), mouse_point.y()))
+            self.v_line.setPos(mouse_point.x())
+            self.h_line.setPos(mouse_point.y())
+
     def update_spectrum(self, sample_window, min_freq, max_freq, y_range,
                spectrogram_length, sample_projection, datasource):
         TIME_EPSILON = 0.1
@@ -131,16 +150,13 @@ class DataVisualizationWidget(QWidget):
             datasource.get_length() - sample_window - TIME_EPSILON,
             datasource.get_length() - TIME_EPSILON,
             min_freq, max_freq, sample_projection)
-        self.graph_widget.clear()
         self.graph_widget.setYRange(0, y_range)
         self.graph_widget.setXRange(min_freq, max_freq)
-        self.graph_widget.showGrid(x=True, y=True)
-        self.graph_widget.plot(x, y, pen=pg.mkPen('r', width=2))
+        self.spectrum_plot.setData(x, y)
 
     def update_spectrogram(self, sample_window, min_freq, max_freq, y_range,
             spectrogram_length, sample_projection, datasource):
         DIVISION_FACTOR = 10
-        start_time = time.time()
 
         args = (sample_window, min_freq, max_freq, spectrogram_length, sample_projection)
         if args != self.spectrogram_args:
