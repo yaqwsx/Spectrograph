@@ -45,8 +45,13 @@ class AccelerometerData:
         """
         return len(self.data) / SAMPLING_RATE
 
+    def get_sample_count_for_window(self, duration):
+        return round(duration * SAMPLING_RATE)
+
     def get_sample_window(self, from_t, to_t, sample_projection):
         self._finish_push_sample()
+
+        expected_samples = self.get_sample_count_for_window(to_t - from_t)
 
         start_idx = int(from_t * SAMPLING_RATE)
         if start_idx < 0:
@@ -54,21 +59,20 @@ class AccelerometerData:
         if start_idx > len(self.data):
             start_idx = len(self.data)
 
-        end_idx = int(to_t * SAMPLING_RATE)
-        if end_idx < 0:
-            end_idx = 0
+        end_idx = start_idx + expected_samples
+
         if end_idx > len(self.data):
             end_idx = len(self.data)
 
-        if start_idx == end_idx or end_idx == 0:
-            return []
+        if end_idx - start_idx != expected_samples:
+            return np.full((expected_samples,), 0)
+
         return np.array([sample_projection(x, y, z) for x, y, z in itertools.islice(self.data, start_idx, end_idx)])
 
 
     def get_fft(self, from_t, to_t, from_freq, to_freq, sample_projection) -> Tuple[np.array, np.array]:
         source = self.get_sample_window(from_t, to_t, sample_projection)
-        if len(source) == 0:
-            return ([], [])
+        assert len(source) != 0
 
         source = scipy.signal.detrend(source)
 
@@ -79,12 +83,6 @@ class AccelerometerData:
         time_high_limit = np.searchsorted(bins, to_freq)
 
         return (bins[time_low_limit:time_high_limit], fft[time_low_limit:time_high_limit])
-
-    def get_spectrogram(self, from_t, to_t, window, from_freq, to_freq, sample_projection):
-        source = self.get_sample_window(from_t, to_t, sample_projection)
-        f, t, ssx = scipy.signal.spectrogram(source, nfft=SAMPLING_RATE * window, mode="magnitude")
-        return f, t, ssx
-
 
 class ThreadPortReadout(Thread):
     def __init__(self, port, report_sample):
