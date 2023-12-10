@@ -159,7 +159,14 @@ class DataVisualizationWidget(QWidget):
         pos = evt[0]
         if self.graph_widget.sceneBoundingRect().contains(pos):
             mouse_point = self.graph_widget.plotItem.vb.mapSceneToView(pos)
-            self.graph_widget.setTitle("<span style='font-size: 12pt'>Frekvence=%0.0f Hz, <span style='color: red'>Amplituda=%0.3f g</span>" % (mouse_point.x(), mouse_point.y()))
+
+            omega = mouse_point.x() * 2 * np.pi
+            acc = 9.81 * mouse_point.y()
+            position = acc / omega / omega
+
+            position_um = position * 1000 * 1000
+
+            self.graph_widget.setTitle("<span style='font-size: 12pt'>Frekvence=%0.0f Hz, <span style='color: red'>Amplituda=%0.3f g, %0.6f µm</span>" % (mouse_point.x(), mouse_point.y(), position_um))
             self.v_line.setPos(mouse_point.x())
             self.h_line.setPos(mouse_point.y())
             self.spectrogram_v_line.setPos(mouse_point.x())
