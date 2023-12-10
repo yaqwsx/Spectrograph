@@ -196,8 +196,7 @@ class DataVisualizationWidget(QWidget):
 
     def update_spectrogram(self, sample_window, min_freq, max_freq, y_range,
             spectrogram_length, sample_projection, datasource):
-        DIVISION_FACTOR = 10
-
+        SPECTROGRAM_LINES = 300
         time_offset = self.time_slider.get_value() - datasource.get_length()
 
         args = (sample_window, min_freq, max_freq, spectrogram_length, sample_projection)
@@ -208,13 +207,13 @@ class DataVisualizationWidget(QWidget):
             _, y = datasource.get_fft(0, sample_window, min_freq, max_freq, sample_projection)
             self.expected_samples = len(y)
             self.spectrogram = deque([np.full((self.expected_samples,), 0)
-                for _ in range(int(spectrogram_length / sample_window * DIVISION_FACTOR))
-            ], maxlen = int(DIVISION_FACTOR * spectrogram_length / sample_window))
+                for _ in range(SPECTROGRAM_LINES)
+            ], maxlen = SPECTROGRAM_LINES)
             self.spectrogram_last_time = datasource.get_length() + self.spectrogram_time_offset - spectrogram_length
 
         steps_made = 0
         while True:
-            start = self.spectrogram_last_time + sample_window * (1 / DIVISION_FACTOR)
+            start = self.spectrogram_last_time + spectrogram_length / SPECTROGRAM_LINES
             end = start + sample_window
             if end >= datasource.get_length() + self.spectrogram_time_offset:
                 break
@@ -229,8 +228,8 @@ class DataVisualizationWidget(QWidget):
             self.spectrogram_last_time = start
 
             # Do not make the GUI responsive
-            if steps_made > 300:
-                break
+            # if steps_made > 50:
+            #     break
 
         line_count = len(self.spectrogram)
 
@@ -385,10 +384,10 @@ class ControlPanelWidget(QWidget):
 
     def get_selected_projection(self):
         projection_functions = [
-            project_xyz,
-            project_x,
-            project_y,
-            project_z
+            "project_xyz",
+            "project_x",
+            "project_y",
+            "project_z"
         ]
         return projection_functions[self.sample_projection_combo.currentIndex()]
 

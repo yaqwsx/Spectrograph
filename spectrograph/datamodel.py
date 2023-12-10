@@ -2,6 +2,7 @@ from enum import Enum
 import itertools
 from queue import Queue
 from threading import Thread, Lock
+import time
 from typing import Tuple
 from cobs import cobs
 from collections import deque
@@ -12,10 +13,10 @@ import serial
 SAMPLING_RATE = 4000
 MAX_HISTORY = 5 * 60 * 4000
 
-def project_xyz(x, y, z):
+def project_xyz(arr):
     return x + y + z
 
-def project_x(x, y, z):
+def project_x(arr):
     return x
 
 def project_y(x, y, z):
@@ -27,23 +28,19 @@ def project_z(x, y, z):
 class AccelerometerData:
     def __init__(self) -> None:
        self.data = deque([], MAX_HISTORY)
+       self.prepared_data = np.array(self.data)
        self.tmp_data = []
 
     def set_data(self, data) -> None:
         self.data = deque(data, MAX_HISTORY)
+        self.prepared_data = np.array(self.data)
         self.tmp_data = []
 
     def as_np(self) -> None:
         return np.array(self.data)
 
     def push_sample(self, sample: Tuple[float, float, float]) -> None:
-        self.tmp_data.append(sample)
-
-    def _finish_push_sample(self):
-        # Not entirely safe, but...
-        x = self.tmp_data
-        self.tmp_data = []
-        self.data.extend(x)
+        self.tmp_data.append(np.array(sample))
 
     def clear(self):
         self.data = deque([], MAX_HISTORY)
@@ -55,7 +52,13 @@ class AccelerometerData:
         return len(self.data) / SAMPLING_RATE
 
     def pull_samples(self):
-        self._finish_push_sample()
+         # Not entirely safe, but...
+        x = self.tmp_data
+        self.tmp_data = []
+        self.data.extend(x)
+
+        if len(x) != 0:
+            self.prepared_data = np.array(self.data)
 
     def get_sample_count_for_window(self, duration):
         return round(duration * SAMPLING_RATE)
@@ -78,7 +81,15 @@ class AccelerometerData:
         if end_idx - start_idx != expected_samples:
             return np.full((expected_samples,), 0)
 
-        return np.array([sample_projection(x, y, z) for x, y, z in itertools.islice(self.data, start_idx, end_idx)])
+        if sample_projection == "project_xyz":
+            x = np.sum(self.prepared_data[start_idx:end_idx], axis=1)
+        elif sample_projection == "project_x":
+            x = self.prepared_data[start_idx:end_idx, 0]
+        elif sample_projection == "project_y":
+            x = self.prepared_data[start_idx:end_idx, 1]
+        elif sample_projection == "project_z":
+            x = self.prepared_data[start_idx:end_idx, 2]
+        return x
 
 
     def get_fft(self, from_t, to_t, from_freq, to_freq, sample_projection) -> Tuple[np.array, np.array]:
