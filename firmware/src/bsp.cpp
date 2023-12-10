@@ -12,12 +12,16 @@ void bsp::trap(const char* reason) {
     bsp::report_error(reason);
     delay(500);
     ESP.restart();
+    // Unreachable
+    while (true)
+        delay(1);
 }
 
 void bsp::initialize_acc() {
     SPI.begin();
     if(!accelerometer.init())
         bsp::trap("Failed to initialize accelerometer");
+    accelerometer.setAccRange(MPU6500_ACC_RANGE_2G);
     accelerometer.enableAccAxes(MPU9250_ENABLE_XYZ);
     accelerometer.enableAccDLPF(false);
     accelerometer.setIntPinPolarity(MPU9250_ACT_HIGH);

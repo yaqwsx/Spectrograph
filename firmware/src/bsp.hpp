@@ -20,7 +20,7 @@ namespace bsp {
     extern MPU6500 accelerometer;
     extern PacketSerial io_channel;
 
-    void trap(const char* reason);
+    void trap [[noreturn]] (const char* reason);
     void initialize_acc();
     void report_error(const char* msg);
 } // namespace bsp

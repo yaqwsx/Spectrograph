@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHB
 from PyQt5.QtGui import QDoubleValidator, QTransform
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 
-from .datamodel import SAMPLING_RATE, AccelerometerData, ThreadPortReadout, project_x, project_xyz, project_y, project_z
+from .datamodel import SAMPLING_RATE, AccelerometerData, SensorRange, ThreadPortReadout, project_x, project_xyz, project_y, project_z
 
 def plasma_colormap(amplitude):
     return pg.ColorMap(
@@ -250,6 +250,7 @@ class ControlPanelWidget(QWidget):
     params_updated = pyqtSignal()
     recording_start = pyqtSignal(str)
     recording_stop = pyqtSignal()
+    recording_range = pyqtSignal(SensorRange)
 
     def __init__(self):
         super().__init__()
@@ -275,6 +276,17 @@ class ControlPanelWidget(QWidget):
 
         # Create controls for window size and spacing
         parameter_input_group = QVBoxLayout()
+
+        # Create sensor sensitivity
+        self.sensor_sensitivity_combo = QComboBox()
+        self.sensor_sensitivity_combo.addItem("Citlivost ±2g")
+        self.sensor_sensitivity_combo.addItem("Citlivost ±4g")
+        self.sensor_sensitivity_combo.addItem("Citlivost ±8g")
+        self.sensor_sensitivity_combo.addItem("Citlivost ±16g")
+        self.sensor_sensitivity_combo.currentIndexChanged.connect(lambda:
+            self.recording_range.emit(self.get_selected_range()))
+        parameter_input_group.addWidget(self.sensor_sensitivity_combo)
+
         parameter_input_group.addWidget(QLabel("Velikost vzorkovacího okna (s)"))
         self.window_size_input = SliderInputWidget(0.1, 3, 0.1, 1)
         self.window_size_input.valueChanged.connect(self.params_updated.emit)
@@ -290,7 +302,7 @@ class ControlPanelWidget(QWidget):
         self.max_freq_input.valueChanged.connect(self.params_updated.emit)
         parameter_input_group.addWidget(self.max_freq_input)
         parameter_input_group.addWidget(QLabel("Rozsah (g):"))
-        self.range_input = SliderInputWidget(0, 2, 0.01, 2)
+        self.range_input = SliderInputWidget(0, 16, 0.01, 2)
         self.range_input.valueChanged.connect(self.params_updated.emit)
         parameter_input_group.addWidget(self.range_input)
         parameter_input_group.addWidget(QLabel("Délka spektrogramu (s):"))
@@ -350,6 +362,7 @@ class ControlPanelWidget(QWidget):
         self.stop_button.setDisabled(False)
         self.com_ports_combo.setDisabled(True)
         self.recording_start.emit(port)
+        self.recording_range.emit(self.get_selected_range())
 
         self.load_button.setDisabled(True)
         self.save_button.setDisabled(True)
@@ -371,6 +384,11 @@ class ControlPanelWidget(QWidget):
             project_z
         ]
         return projection_functions[self.sample_projection_combo.currentIndex()]
+
+    def get_selected_range(self):
+        RANGES = [SensorRange.RANGE_2G, SensorRange.RANGE_4G, SensorRange.RANGE_8G, SensorRange.RANGE_16G]
+        return RANGES[self.sensor_sensitivity_combo.currentIndex()]
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -406,7 +424,7 @@ class MainWindow(QMainWindow):
                 self.control_panel_widget.get_selected_projection(),
                 self.data
             ))
-        self.refresh_widget_timer.start(50)
+        self.refresh_widget_timer.start(100)
 
         self.refresh_spectrograph_timer = QTimer(self)
         self.refresh_spectrograph_timer.timeout.connect(lambda:
@@ -419,10 +437,11 @@ class MainWindow(QMainWindow):
                 self.control_panel_widget.get_selected_projection(),
                 self.data
             ))
-        self.refresh_spectrograph_timer.start(50)
+        self.refresh_spectrograph_timer.start(100)
 
         self.control_panel_widget.recording_start.connect(self.on_readout_start)
         self.control_panel_widget.recording_stop.connect(self.on_readout_stop)
+        self.control_panel_widget.recording_range.connect(self.on_range_change)
         self.control_panel_widget.load_button.clicked.connect(self.load_trace)
         self.control_panel_widget.save_button.clicked.connect(self.save_trace)
         self.control_panel_widget.clear_button.clicked.connect(self.clear_trace)
@@ -431,6 +450,9 @@ class MainWindow(QMainWindow):
         self.readout = ThreadPortReadout(port, self.data.push_sample)
         self.readout.start()
         self.data_visualization_widget.on_readout_start()
+
+    def on_range_change(self, range):
+        self.readout.set_range(range)
 
     def on_readout_stop(self):
         if self.readout is not None:

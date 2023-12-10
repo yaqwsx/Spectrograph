@@ -1,4 +1,6 @@
+from enum import Enum
 import itertools
+from queue import Queue
 from threading import Thread, Lock
 from typing import Tuple
 from cobs import cobs
@@ -93,6 +95,12 @@ class AccelerometerData:
 
         return (bins[time_low_limit:time_high_limit], fft[time_low_limit:time_high_limit])
 
+class SensorRange(Enum):
+    RANGE_2G = 2
+    RANGE_4G = 4
+    RANGE_8G = 8
+    RANGE_16G = 16
+
 class ThreadPortReadout(Thread):
     def __init__(self, port, report_sample):
         super().__init__()
@@ -100,11 +108,14 @@ class ThreadPortReadout(Thread):
         self.should_be_running = True
         self.port = port
         self.report_sample = report_sample
+        self.command_queue = Queue()
 
     def run(self):
         try:
             with serial.Serial(port=self.port, baudrate=921600) as connection:
                 while self.should_be_running:
+                    self._handle_commands(connection)
+
                     data = self.read_cobs_packet(connection)
                     if not data:
                         continue
@@ -114,6 +125,11 @@ class ThreadPortReadout(Thread):
                     except cobs.DecodeError as e:
                         continue
                     packet_type = packet[0]
+                    if packet_type == 2: # Error
+                        err_message = packet[1:].decode("utf-8")
+                        print(f"Error: {err_message}")
+                        continue
+
                     if packet_type != 1 or len(packet) != 8:
                         continue
                     range_value = packet[1]
@@ -143,3 +159,21 @@ class ThreadPortReadout(Thread):
 
     def transform_to_g(self, value: int, range: int) -> float:
         return range / 32767 * value
+
+    def _handle_commands(self, port) -> None:
+        if self.command_queue.empty():
+            return
+
+        command = self.command_queue.get()
+
+        if isinstance(command, SensorRange):
+            self._send_set_range(port, command)
+            return
+
+    def set_range(self, range: SensorRange) -> None:
+        assert isinstance(range, SensorRange)
+        self.command_queue.put_nowait(range)
+
+    def _send_set_range(self, port, range) -> None:
+        message = cobs.encode(bytes([3, range.value])) + bytes([0])
+        port.write(message)
